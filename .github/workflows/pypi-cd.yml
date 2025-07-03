@@ -76,4 +76,4 @@ jobs:
           echo "[pypi]"                 >> ~/.pypirc
           echo "repository=$PYPI_REPO"  >> ~/.pypirc
           python -m pip install twine
-          python -m twine upload -r pypi --skip-existing wheelhouse/*
+          python -m twine upload -r pypi --skip-existing --verbose wheelhouse/*
