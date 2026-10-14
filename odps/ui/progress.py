@@ -213,19 +213,12 @@ User Interface
 
 
 try:
-    from ..console import (
-        in_ipython_frontend,
-        ipython_major_version,
-        is_widgets_available,
-        widgets,
-    )
-
-    if ipython_major_version < 4:
-        from IPython.utils.traitlets import List, Unicode
-    else:
-        from traitlets import Unicode, List  # noqa: F401
     from IPython.display import display
+    from traitlets import List, Unicode  # noqa: F401
+
+    from ..console import in_ipython_frontend, is_widgets_available, widgets
 except Exception:
+    display = None
     InstancesProgress = None
 else:
     if widgets and in_ipython_frontend():
@@ -233,15 +226,21 @@ else:
         class InstancesProgress(widgets.DOMWidget):
             _view_name = build_trait(Unicode, "InstancesProgress", sync=True)
             _view_module = build_trait(Unicode, "pyodps/progress", sync=True)
-            prefix = build_trait(Unicode, "prefix", sync=True)
-            suffix = build_trait(Unicode, "suffix", sync=True)
+            # Must match WIDGET_MODULE_VERSION in odps/static/ui/src/extension.js,
+            # otherwise the browser cannot resolve this view class.
+            _view_module_version = build_trait(Unicode, "2.0.0", sync=True)
+            prefix = build_trait(Unicode, "", sync=True)
+            suffix = build_trait(Unicode, "", sync=True)
 
             def __init__(self, **kwargs):
                 """Constructor"""
-                widgets.DOMWidget.__init__(self, **kwargs)  # Call the base.
+                super().__init__(**kwargs)  # Call the base.
 
                 # Allow the user to register error callbacks with the following signatures:
-                self.errors = widgets.CallbackDispatcher(accepted_nargs=[0, 1])
+                if hasattr(widgets, "CallbackDispatcher"):
+                    self.errors = widgets.CallbackDispatcher(accepted_nargs=[0, 1])
+                else:
+                    self.errors = []
 
             def update(self):
                 self.send(json.dumps(dict(action="update", content=[])))

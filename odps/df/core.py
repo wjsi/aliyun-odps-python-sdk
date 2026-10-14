@@ -19,8 +19,8 @@ from ..models.partition import Partition
 from ..types import CompositeDataType
 from .expr.utils import get_attrs
 from .expr.expressions import CollectionExpr
-from .types import validate_data_type
-from .backends.odpssql.types import odps_schema_to_df_schema
+from .types import DynamicSchema, validate_data_type
+from .backends.odpssql.types import odps_schema_to_df_schema, odps_type_to_df_type
 from .backends.pd.types import pd_to_df_schema, df_type_to_np_type, cast_composite_sequence
 from .backends.sqlalchemy.types import sqlalchemy_to_df_schema
 
@@ -35,6 +35,63 @@ try:
     has_sqlalchemy = True
 except ImportError:
     has_sqlalchemy = False
+
+
+def _df_type_of(col_type):
+    """Return the DataFrame type of a storage type, or the type itself."""
+    if hasattr(col_type, 'CLASS_NAME'):
+        return col_type
+    try:
+        return odps_type_to_df_type(col_type)
+    except KeyError:
+        # No DataFrame counterpart (exotic storage type); keep it so the frame
+        # can still be constructed.
+        return col_type
+
+
+def _convert_column(col):
+    """Return ``col`` with a DataFrame type, or ``col`` itself if it has one."""
+    df_type = _df_type_of(col.type)
+    if df_type is col.type:
+        return col
+
+    # Keyword arguments only: the model column classes
+    # (``TableSchema.TableColumn``/``TablePartition``) accept nothing else.
+    return type(col)(
+        name=col.name,
+        type=df_type,
+        comment=col.comment,
+        label=col.label,
+        nullable=col.nullable,
+        generate_expression=col._generate_expression,
+    )
+
+
+def _normalize_local_schema(schema):
+    """Convert storage types in a user-supplied schema into DataFrame types.
+
+    ``DataFrame(pd_df, schema=TableSchema.from_lists(...))`` accepts an
+    :class:`odps.models.TableSchema`, whose columns carry ``odps.types``
+    (storage) instances. Expressions need the ``odps.df.types`` counterparts:
+    those provide ``CLASS_NAME``, which field access builds its class from.
+
+    Only the types change: column classes, comments, labels, nullability, the
+    partition split and, for dynamic schemas, the default type are carried over.
+    """
+    columns = [_convert_column(col) for col in schema.simple_columns]
+    partitions = [_convert_column(part) for part in schema.partitions or []]
+
+    if all(
+        new.type is old.type
+        for new, old in zip(columns + partitions, schema.columns)
+    ):
+        # Nothing to convert; keep the caller's schema object as it is.
+        return schema
+
+    kwargs = {}
+    if isinstance(schema, DynamicSchema):
+        kwargs['default_type'] = schema.default_type
+    return type(schema)(columns=columns, partitions=partitions or None, **kwargs)
 
 
 class DataFrame(CollectionExpr):
@@ -96,9 +153,9 @@ class DataFrame(CollectionExpr):
             self._proxy = self.copy().filter_parts(data)
         elif has_pandas and isinstance(data, pd.DataFrame):
             if 'schema' in kwargs and kwargs['schema']:
-                schema = kwargs.pop('schema')
+                schema = _normalize_local_schema(kwargs.pop('schema'))
             elif '_schema' in kwargs:
-                schema = kwargs.pop('_schema')
+                schema = _normalize_local_schema(kwargs.pop('_schema'))
             else:
                 unknown_as_string = kwargs.pop('unknown_as_string', False)
                 as_type = kwargs.pop('as_type', None)

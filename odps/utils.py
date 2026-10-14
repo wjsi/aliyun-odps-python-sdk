@@ -637,7 +637,7 @@ def init_progress_bar(val=1, use_console=True):
 
 
 def init_progress_ui(val=1, lock=False, use_console=True, mock=False):
-    from .ui import ProgressGroupUI, html_notify
+    from .ui import ProgressGroupUI
 
     progress_group = None
     bar = None
@@ -702,10 +702,6 @@ def init_progress_ui(val=1, lock=False, use_console=True, mock=False):
         def update_group(self):
             if progress_group:
                 progress_group.update()
-
-        @ui_method
-        def notify(self, msg):
-            html_notify(msg)
 
         @ui_method
         def close(self):

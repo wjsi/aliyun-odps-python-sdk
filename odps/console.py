@@ -89,10 +89,7 @@ else:
 
     # import widgets and display
     try:
-        if ipython_major_version < 4:
-            from IPython.html import widgets
-        else:
-            from ipywidgets import widgets
+        from ipywidgets import widgets
     except ImportError:
         widgets = None
     from IPython.display import display
@@ -204,20 +201,19 @@ def in_ipython_frontend():
 _backend_name = None
 
 
-def get_notebook_backend():
-    global _backend_name
-    if _backend_name is not None:
-        return _backend_name
+def _detect_notebook_backend():
+    lowered_env_names = [env_name.lower() for env_name in os.environ]
 
-    if "VSCODE_PID" in os.environ:
-        _backend_name = "VSCode"
-        return _backend_name
+    if any(name.startswith("dsw_") for name in lowered_env_names):
+        # DSW always use jupyter lab
+        return "DSW"
 
-    # DSW always use jupyter lab
-    for env_name in os.environ.keys():
-        if env_name.lower().startswith("dsw_"):
-            _backend_name = "DSW"
-            return _backend_name
+    if any(name.startswith("vscode_") for name in lowered_env_names):
+        # Local VS Code sets VSCODE_PID, while VS Code remote (remote-ssh,
+        # dev containers, WSL) does not set it in the kernel process but
+        # exports other VSCODE_* variables that the kernel inherits. Widgets
+        # fail to load on both front ends. See GH#258.
+        return "VSCode"
 
     for arg in sys.argv:
         if arg.endswith(".json") and os.path.exists(arg):
@@ -226,26 +222,47 @@ def get_notebook_backend():
             # jupyter notebook will generate a nbserver-{pid}.json instead
             lab_cfg_path = os.path.join(ipy_json_path, f"jpserver-{os.getppid()}.json")
             if os.path.exists(lab_cfg_path):
-                _backend_name = "JupyterLab"
-                return _backend_name
-    _backend_name = "JupyterNotebook"
-    return _backend_name
+                return "JupyterLab"
+    return "JupyterNotebook"
+
+
+def get_notebook_backend():
+    global _backend_name
+    if _backend_name is not None:
+        return _backend_name
+
+    backend = _detect_notebook_backend()
+    # Cache the result only inside an IPython front end: elsewhere the process
+    # may start a kernel later on (sys.argv then carries its connection file),
+    # and a value cached beforehand would describe the wrong front end.
+    if in_ipython_frontend():
+        _backend_name = backend
+    return backend
 
 
 def is_widgets_available():
     from .config import options
 
-    if not options.display.notebook_widget or widgets is None:
+    widget_opt = options.display.notebook_widget
+    if widget_opt is False or widgets is None:
         return False
 
-    # todo when widget for lab or vscode ready, change this
-    if get_notebook_backend() in ("DSW", "JupyterLab", "VSCode"):
+    if widget_opt is None and get_notebook_backend() in ("DSW", "VSCode"):
+        # None means auto-detecting: widgets stay enabled by default, except
+        # on front ends without a working widget extension.
         return False
 
-    if hasattr(widgets.Widget, "_version_validated"):
-        return bool(getattr(widgets.Widget, "_version_validated", None))
-    else:
-        return True
+    # Gate on ipywidgets version >= 7.0
+    try:
+        import ipywidgets as _ipywidgets
+
+        _widgets_version = tuple(int(v) for v in _ipywidgets.__version__.split(".")[:2])
+        if _widgets_version < (7, 0):
+            return False
+    except Exception:
+        return False
+
+    return True
 
 
 def in_qtconsole():
@@ -772,21 +789,7 @@ def human_file_size(size):
 
 
 def create_progress_widget():
-    # Import only if an IPython widget, i.e., widget in iPython NB
-    if ipython_major_version < 4:
-        widget_cls = widgets.FloatProgressWidget
-        from IPython.utils.traitlets import Unicode
-    else:
-        widget_cls = widgets.FloatProgress
-        from traitlets import Unicode
-
-    from .ui.common import build_trait
-
-    class TransientProgressBar(widget_cls):
-        _view_name = build_trait(Unicode, "TransientProgressView", sync=True)
-        _view_module = build_trait(Unicode, "pyodps/progress", sync=True)
-
-    return TransientProgressBar()
+    return widgets.FloatProgress()
 
 
 class ProgressBar(Iterator):
@@ -828,11 +831,8 @@ class ProgressBar(Iterator):
             # Import only if ipython_widget, i.e., widget in IPython
             # notebook
             try:
-                if ipython_major_version < 4:
-                    from IPython.html import widgets  # noqa: F401
-                else:
-                    from ipywidgets import widgets  # noqa: F401
                 from IPython.display import display  # noqa: F401
+                from ipywidgets import widgets  # noqa: F401
 
                 ipython_widget = is_widgets_available()
             except ImportError:

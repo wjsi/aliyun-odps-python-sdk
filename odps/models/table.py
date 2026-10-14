@@ -1725,6 +1725,32 @@ class Table(XMLLazyLoad):
             max_field_size=self._get_max_field_size(),
         )
 
+    @utils.with_wait_argument
+    def merge_small_files(self, hints=None, async_=False, **kw):
+        """
+        Merge small files in this table.
+
+        The caller's hints are not modified; explicit hints override the
+        default small-file merge settings.
+
+        :param hints: optional task settings
+        :param async_: run asynchronously if True
+        :return: instance
+        :rtype: :class:`odps.models.Instance`
+        """
+        from .tasks.merge import MergeTask
+
+        inst = MergeTask.run_merge_files(
+            self.parent,
+            self.full_table_name,
+            schema=self._get_schema_name(),
+            hints=hints,
+            **kw
+        )
+        if not async_:
+            inst.wait_for_success()
+        return inst
+
     def to_df(self):
         """
         Create a PyODPS DataFrame from this table.

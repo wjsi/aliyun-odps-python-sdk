@@ -544,6 +544,9 @@ default_options.register_option(
     "read_timeout", DEFAULT_READ_TIMEOUT, validator=is_integer
 )
 default_options.register_option(
+    "write_timeout", None, validator=any_validator(is_null, is_positive_integer)
+)
+default_options.register_option(
     "pool_connections", DEFAULT_POOL_CONNECTIONS, validator=is_integer
 )
 default_options.register_option(
@@ -744,7 +747,12 @@ default_options.register_pandas(
     "display.show_dimensions", "truncate", validator=is_in([True, False, "truncate"])
 )
 
-default_options.register_option("display.notebook_widget", True, validator=is_bool)
+# None means auto-detecting: interactive widgets are enabled unless the
+# notebook front end is known to lack support (DSW, Jupyter inside VSCode).
+# True forces widgets on, False turns them off.
+default_options.register_option(
+    "display.notebook_widget", None, validator=any_validator(is_null, is_bool)
+)
 default_options.redirect_option(
     "display.notebook_repr_widget", "display.notebook_widget"
 )
